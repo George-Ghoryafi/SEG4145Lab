@@ -60,8 +60,8 @@ all: main-build
 main-build: OLED.elf secondary-outputs
 
 # Tool invocations
-OLED.elf OLED.map: $(OBJS) $(USER_OBJS) C:\Users\uzair\Downloads\OLED1\OLED\STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "OLED.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\uzair\Downloads\OLED1\OLED\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="OLED.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
+OLED.elf OLED.map: $(OBJS) $(USER_OBJS) C:\Users\georg\OneDrive\Documents\EmbeddedLabs\Lab\ 2\OLED\STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "OLED.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\georg\OneDrive\Documents\EmbeddedLabs\Lab 2\OLED\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="OLED.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

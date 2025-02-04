@@ -26,7 +26,6 @@
 #include "stdio.h"
 #include "string.h"
 
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,6 +61,9 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
+void Task_ReadSensor(void);
+void Task_UpdateDisplay(void);
+void Task_SendUART(void);
 
 /* USER CODE END PFP */
 
@@ -69,6 +71,14 @@ static void MX_ADC1_Init(void);
 /* USER CODE BEGIN 0 */
 uint32_t sensorValue = 0;
 float fvoltage = 0;
+char snum[50];
+char msg[100];
+
+uint32_t lastSensorReadTime = 0;
+uint32_t lastDisplayUpdateTime = 0;
+const uint32_t sensorReadInterval = 500;
+const uint32_t displayUpdateInterval = 500;
+
 
 int uart2_write(int ch)
 {
@@ -133,23 +143,20 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_ADC_Start(&hadc1);
-	  HAL_ADC_PollForConversion(&hadc1,1);
-	  sensorValue = HAL_ADC_GetValue(&hadc1);
-	  fvoltage = (float)sensorValue * (3.3/4095.0);
+      uint32_t currentTime = HAL_GetTick();
 
-	  sprintf(msg, "%f\r\n", fvoltage);
-	  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+      if (currentTime - lastSensorReadTime >= sensorReadInterval)
+      {
+          lastSensorReadTime = currentTime;
+          Task_ReadSensor();
+          Task_SendUART();
+      }
 
-	  sprintf(snum, "%f", fvoltage);
-
-
-	  SSD1306_Clear();
-	  SSD1306_GotoXY (0, 30);
-	  SSD1306_Puts (snum, &Font_16x26, 1);
-	  SSD1306_UpdateScreen();
-
-	  HAL_Delay (500);
+      if (currentTime - lastDisplayUpdateTime >= displayUpdateInterval)
+      {
+          lastDisplayUpdateTime = currentTime;
+          Task_UpdateDisplay();
+      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -361,6 +368,28 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void Task_ReadSensor(void)
+{
+    HAL_ADC_Start(&hadc1);
+    HAL_ADC_PollForConversion(&hadc1, 1);
+    sensorValue = HAL_ADC_GetValue(&hadc1);
+    fvoltage = (float)sensorValue * (3.3 / 4095.0);
+}
+
+void Task_SendUART(void)
+{
+    sprintf(msg, "%f\r\n", fvoltage);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+}
+
+void Task_UpdateDisplay(void)
+{
+    sprintf(snum, "%f", fvoltage);
+    SSD1306_Clear();
+    SSD1306_GotoXY(0, 30);
+    SSD1306_Puts(snum, &Font_16x26, 1);
+    SSD1306_UpdateScreen();
+}
 
 /* USER CODE END 4 */
 
