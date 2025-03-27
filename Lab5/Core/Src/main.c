@@ -55,14 +55,14 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart2;
 
 /* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
+osThreadId_t lockTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for keypadTast */
-osThreadId_t keypadTastHandle;
+osThreadId_t keypadTaskHandle;
 const osThreadAttr_t keypadTast_attributes = {
   .name = "keypadTast",
   .stack_size = 128 * 4,
@@ -76,27 +76,35 @@ const osThreadAttr_t motionTask_attributes = {
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for outputTask */
-osThreadId_t outputTaskHandle;
-const osThreadAttr_t outputTask_attributes = {
+osThreadId_t ledTaskHandle;
+const osThreadAttr_t ledTask_attributes = {
+  .name = "outputTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for lcdTask */
+osThreadId_t lcdTaskHandle;
+const osThreadAttr_t lcdTask_attributes = {
   .name = "outputTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
 extern char key;
-char masterkey[6];
-int masterlen = 0;
-char asterisk[6];
-char hold[6];
-int holdlen = 0;
+char password[6];
+int passLength = 0;
+char inputCensored[6];
+char input[6];
+int inputLength = 0;
 int motion = 0;
 
 char msg[20];
 
-int alarmgraceperiod = 60; // 5 seconds - should be 60 seconds
-char alarmgracestring[3];
-int alarmgraceflag = 0; //0 for alarm, 1 for arming grace, 2 for movement detected grace
-int wipescreenflag = 0;
+int timer60 = 60;
+char timerStr[3];
+int flag = 0; //0 for alarm, 1 for arming grace, 2 for movement detected grace
+
+int clearLCD = 0;
 
 TimerHandle_t xTimer;
 uint8_t seconds = 0;
@@ -110,31 +118,17 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
-void StartDefaultTask(void *argument);
-void StartKeypadTask(void *argument);
-void StartMotionSensor(void *argument);
-void StartOutputTask(void *argument);
+void TaskLock(void *argument);
+void TaskKeypad(void *argument);
+void TaskSensor(void *argument);
+void TaskLED(void *argument);
+void TaskLCD(void *argument);
 
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-void vTimerCallback(TimerHandle_t xTimer) {
-    seconds++;
-
-
-
-    sprintf(msg, "%d sec\r\n", seconds);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-    if (seconds >= 60) {
-        seconds = 0;
-    }
-//    alarmgraceperiod--;
-}
-
+//
 /* USER CODE END 0 */
 
 /**
@@ -203,16 +197,19 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  lockTaskHandle = osThreadNew(TaskLock, NULL, &defaultTask_attributes);
 
   /* creation of keypadTast */
-  keypadTastHandle = osThreadNew(StartKeypadTask, NULL, &keypadTast_attributes);
+  keypadTaskHandle = osThreadNew(TaskKeypad, NULL, &keypadTast_attributes);
 
   /* creation of motionTask */
-  motionTaskHandle = osThreadNew(StartMotionSensor, NULL, &motionTask_attributes);
+  motionTaskHandle = osThreadNew(TaskSensor, NULL, &motionTask_attributes);
 
   /* creation of outputTask */
-  outputTaskHandle = osThreadNew(StartOutputTask, NULL, &outputTask_attributes);
+  ledTaskHandle = osThreadNew(TaskLED, NULL, &ledTask_attributes);
+
+  /* creation of outputTask */
+  lcdTaskHandle = osThreadNew(TaskLCD, NULL, &lcdTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -482,186 +479,122 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
-{
-  /* USER CODE BEGIN 5 */
-
-	xTimer = xTimerCreate("Timer1Sec", pdMS_TO_TICKS(1000), pdTRUE, (void *)0, vTimerCallback);
-
-	  if (xTimer == NULL) {
-	    sprintf(msg, "%s \r\n","Error Timer");
-	    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-	  } else {
-		  xTimerStart(xTimer, 0);
-	  }
-
-  /* Infinite loop */
-  for(;;)
-  {
-
-	  if (armed == 0) {
-		  __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2, 250);
-	  } else {
-		  __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2, 750);
-	  }
-
-	osDelay(100);
-
-  }
-  /* USER CODE END 5 */
-}
-
-/* USER CODE BEGIN Header_StartKeypadTask */
+/* USER CODE BEGIN Header_TaskKeypad */
 /**
 * @brief Function implementing the keypadTast thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartKeypadTask */
-void StartKeypadTask(void *argument)
+/* USER CODE END Header_TaskKeypad */
+void TaskKeypad(void *argument)
 {
-  /* USER CODE BEGIN StartKeypadTask */
-  /* Infinite loop */
   for(;;)
   {
+    // get char input from keypad
 	 key = Get_Key();
 
-
 	 if (armed == 0) {
-
-		 if (key == '*') { // Submitted
-			 wipescreenflag = 1;
-			if (masterlen >= 4 && masterlen <= 6) {
-				armed = 1; // arm the system
-
-				//Allow grace period for user to walk away
-				alarmgraceperiod = 60;
-				alarmgraceflag = 1;
-			} else {
-				continue;
+		 if (key == '*') { // Password submitted
+			 clearLCD = 1;
+      // Check for valid password length
+			if (passLength >= 4 && passLength <= 6) {
+        // arm the system and start a 60 second timer to 
+        // allow the user to leave without triggering the alarm.
+				armed = 1;
+				timer60 = 60;
+				flag = 1;
 			}
-		 } else if (masterlen < 6) {
-			masterkey[masterlen] = key;
-			masterlen++;
+     // Add char to password
+		 } else if (passLength < 6) {
+			password[passLength] = key;
+			passLength++;
 		 }
 
+   // armed == 1
 	 } else {
-
-		 if (key == '*') { // Submitted
-			 wipescreenflag = 1;
-			 int match = 1;
-			 if (masterlen != holdlen) {
-				 match = 0;
-			 } else {
-				 for (int i=0;i<masterlen;i++){
-					 if (masterkey[i] != hold[i]) {
-						 match = 0;
-					 }
-				 }
-			 }
-
-			 if (match == 1) {
+		 if (key == '*') { // Password submitted
+			 clearLCD = 1;
+       // check password
+			 if (passLength == inputLength && strcmp(password, input) == 0) {
+         // disarm system and clear password
 				 armed = 0;
-				 //Clear master
-				 for (int i=0;i<masterlen;i++){
-					 masterkey[i] = ' ';
-				 }
-				 masterlen = 0;
-				 //Clear hold
-				 for (int i=0;i<holdlen;i++){
-					 hold[i] = ' ';
-					 asterisk[i] = ' ';
-				 }
-				 holdlen = 0;
+				 memset(password, ' ', passLength);
+				 passLength = 0;
+       }
 
-			 } else {
-				 //Clear hold
-				 for (int i=0;i<holdlen;i++){
-					 hold[i] = ' ';
-					 asterisk[i] = ' ';
-				 }
-				 holdlen = 0;
-			 }
-		 } else if (holdlen < 6) {
-			 hold[holdlen] = key;
-			 asterisk[holdlen] = '*';
-			 holdlen++;
+       // clear input
+       memset(input, ' ', inputLength);
+       memset(inputCensored, ' ', inputLength);
+       inputLength = 0;
+
+     // Update keypad input
+		 } else if (inputLength < 6) {
+			 input[inputLength] = key;
+			 inputCensored[inputLength] = '*';
+			 inputLength++;
 		 }
 	 }
 
 	 osDelay(50);
-
-
   }
-  /* USER CODE END StartKeypadTask */
 }
 
-/* USER CODE BEGIN Header_StartMotionSensor */
+
+/* USER CODE BEGIN Header_StartMotionSens */
 /**
 * @brief Function implementing the motionTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartMotionSensor */
-void StartMotionSensor(void *argument)
+/* USER CODE END Header_StartMotionSens */
+void TaskSensor(void *argument)
 {
-  /* USER CODE BEGIN StartMotionSensor */
   /* Infinite loop */
   for(;;)
   {
 
 	  if (armed == 1) {
 
-		 //Arming grace period
-		 if (alarmgraceflag == 1) {
-			if (alarmgraceperiod == 0) {
-				alarmgraceflag = 0;
+		 // flag indicates we should run the first 60 second timer
+     // during which we do not check the motion sensor
+		 if (flag == 1) {
+			if (timer60 == 0) {
+        // set flag to start alarm timer
+				flag = 0;
 			} else {
+				timer60--;
 				osDelay(1000);
-				alarmgraceperiod--;
 			}
-
-			continue;
 		}
 
-		if (alarmgraceflag == 0) {
-			motion = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15);
-			if (motion == 1) { // Detected motion
-				alarmgraceperiod = 60;
-				alarmgraceflag = 2;
+    // flag indicates we should try to detect any motion
+		 else if (flag == 0) {
+			motion = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15); // read sensor
+			if (motion == 1) {
+        // when motion is detected, reset timer and 
+        // set flag to start buzzer timer
+				timer60 = 60;
+				flag = 2;
 			}
-
 		}
 
-		if (alarmgraceflag == 2) {
-			//Detection grace period
-			if (alarmgraceperiod == 0) {
-				//Activate buzzer
-				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 1);
+		else if (flag == 2) {
+			// wait 60 seconds after being detected to set off buzzer
+			if (timer60 == 0) {
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 1); // turn on buzzer
 			} else {
+				timer60--;
 				osDelay(1000);
-				alarmgraceperiod--;
 			}
-
-			continue;
-
 		}
 
+    } else {
+      // turn off buzzer when system is no longer armed
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 0);
     }
-
-    //Deactivate buzzer
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 0);
 
 	osDelay(500);
   }
-  /* USER CODE END StartMotionSensor */
 }
 
 /* USER CODE BEGIN Header_StartOutputTask */
@@ -671,52 +604,99 @@ void StartMotionSensor(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartOutputTask */
-void StartOutputTask(void *argument)
+void TaskLED(void *argument)
 {
-  /* USER CODE BEGIN StartOutputTask */
-  /* Infinite loop */
   for(;;)
   {
-	  if (wipescreenflag == 1) {
-		  SSD1306_Clear();
-		  wipescreenflag = 0;
-	  }
 
 	if (armed == 0) {
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET); // turn on green LED
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET); // turn off red LED
 
-		SSD1306_GotoXY(0,0);
-		SSD1306_Puts("NOT ARMED", &Font_11x18,1);
-		SSD1306_GotoXY(0,30);
-		SSD1306_Puts(masterkey, &Font_11x18,1);
-		SSD1306_UpdateScreen();
-
-	} else {
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
-
-		SSD1306_GotoXY(0,0);
-		SSD1306_Puts("ARMED", &Font_11x18,1);
-		SSD1306_GotoXY(0,30);
-		SSD1306_Puts(asterisk, &Font_11x18,1);
-		SSD1306_GotoXY(100,30);
-		if(alarmgraceperiod < 10){
-			sprintf(alarmgracestring,"0%d", alarmgraceperiod);
-		}else{
-			sprintf(alarmgracestring,"%d", alarmgraceperiod);
-		}
-		SSD1306_Puts(alarmgracestring, &Font_11x18,1);
-		SSD1306_UpdateScreen();
-
+  } else {
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET); // turn on red LED
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET); // turn off green LED
 	}
 
 	osDelay(250);
+  }
+}
 
+
+/* USER CODE BEGIN TaskLCD */
+/**
+* @brief Function implementing the outputTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END TaskLCD */
+void TaskLCD(void *argument)
+{
+  for(;;)
+  {
+    // clear screen when prompted
+	  if (clearLCD == 1) {
+		  SSD1306_Clear();
+		  clearLCD = 0;
+	  }
+
+	if (armed == 0) {
+    // display state and entered password if any
+		SSD1306_GotoXY(0,0);
+		SSD1306_Puts("NOT ARMED", &Font_11x18,1);
+		SSD1306_GotoXY(0,30);
+		SSD1306_Puts(password, &Font_11x18,1);
+		SSD1306_UpdateScreen();
+
+	} else {
+    // display state and censored (****) password if any
+		SSD1306_GotoXY(0,0);
+		SSD1306_Puts("ARMED", &Font_11x18,1);
+		SSD1306_GotoXY(0,30);
+		SSD1306_Puts(inputCensored, &Font_11x18,1);
+
+    // display timer on bottom right when armed
+		SSD1306_GotoXY(100,30);
+		if(timer60 < 10){
+			sprintf(timerStr,"0%d", timer60); // add zero at front for consistent format
+		}else{
+			sprintf(timerStr,"%d", timer60);
+		}
+		SSD1306_Puts(timerStr, &Font_11x18,1);
+
+		SSD1306_UpdateScreen();
+	}
+
+	osDelay(250);
+  }
+}
+
+
+/* USER CODE BEGIN Header_TaskLock */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_TaskLock */
+void TaskLock(void *argument)
+//
+{
+  /* Infinite loop */
+  for(;;)
+  {
+
+	  if (armed == 0) {
+		  __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2, 250); // move lock to open position when armed
+	  } else {
+		  __HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_2, 750); // move lock to closed position when unarmed
+	  }
+
+	osDelay(100);
 
   }
-  /* USER CODE END StartOutputTask */
 }
+
 
 /**
   * @brief  Period elapsed callback in non blocking mode
@@ -727,6 +707,7 @@ void StartOutputTask(void *argument)
   * @retval None
   */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+//
 {
   /* USER CODE BEGIN Callback 0 */
 
